@@ -1,7 +1,7 @@
 .. docs-include-ref
 
 pmace_jax
-========
+===========
 
 ..
     Change the number of = to match the number of characters in the project name.
