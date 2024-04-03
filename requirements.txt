@@ -2,7 +2,7 @@ matplotlib
 numpy
 tifffile
 tqdm
-imagecodes
+imagecodecs
 PyYAML
 pandas
 h5py
