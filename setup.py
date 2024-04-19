@@ -1,6 +1,4 @@
 from setuptools import setup, find_packages, Extension
-import numpy as np
-import os
 
 NAME = "pmace_jax"
 VERSION = "0.1"
@@ -20,6 +18,8 @@ setup(install_requires=REQUIRES,
       author=AUTHOR,
       author_email=EMAIL,
       license=LICENSE,
-      packages=find_packages(include=['pmace_jax']),
-      )
-
+#       packages=find_packages(include=['pmace_jax']),
+      packages=find_packages(),
+#       install_requires=['numpy==1.22.*', 'matplotlib>=3.5', 'scipy==1.8.0', 'pandas==1.4.2',
+#                         'tifffile==2022.5.4', 'PyYAML==6.0', 'imagecodecs==2022.2.22', 'h5py==3.7.0'],
+     )
