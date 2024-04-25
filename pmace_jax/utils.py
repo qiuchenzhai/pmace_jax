@@ -380,15 +380,15 @@ def fresnel_propagation(field, wavelength, distance, dx):
 
 
 def gen_init_probe(y_meas, patch_crds, ref_obj, lpf_sigma=1,
-                   fres_propagation=False, wavelength=None, distance=None, dx=None):
-    """Generate an initial complex probe based on measured intensity data and reference object.
+                   fres_prop=False, wavelength=None, distance=None, dx=None):
+    """Generates an initial complex probe based on measured intensity data and reference object.
 
     Args:
         y_meas (jax.numpy.ndarray): Measured intensity data as a 2D array.
-        patch_crds (jax.numpy.ndarray): Coordinates indicating the position of the patch in the reference object.
+        patch_crds (tuple): Coordinates indicating the position of the patch in the reference object.
         ref_obj (jax.numpy.ndarray): Reference object used for initialization.
         lpf_sigma (float, optional): Standard deviation for the Gaussian Low Pass Filter. Defaults to 2.
-        fres_propagation (bool, optional): Whether to perform Fresnel propagation on the initialized probe. Defaults to False.
+        fres_prop (bool, optional): Whether to perform Fresnel propagation on the initialized probe. Defaults to False.
         wavelength (float, optional): Wavelength of the wave, required if fres_propagation is True.
         distance (float, optional): Propagation distance, required if fres_propagation is True.
         dx (float, optional): Sampling interval in the source plane, calculated if not provided.
@@ -397,7 +397,7 @@ def gen_init_probe(y_meas, patch_crds, ref_obj, lpf_sigma=1,
         jax.numpy.ndarray: The initialized and optionally propagated and filtered complex probe as a 2D array.
     """
     # Ensure wavelength, distance, and dx are provided for Fresnel propagation
-    if fres_propagation and (wavelength is None or distance is None):
+    if fres_prop and (wavelength is None or distance is None):
         raise ValueError("Wavelength and distance must be provided for Fresnel propagation.")
 
     # Initialization
@@ -413,16 +413,13 @@ def gen_init_probe(y_meas, patch_crds, ref_obj, lpf_sigma=1,
     init_probe = jnp.mean(divide_cmplx_numbers(compute_ift(y_meas), patch), axis=0)
 
     # Perform Fresnel propagation if specified
-    if fres_propagation:
+    if fres_prop:
         init_probe = fresnel_propagation(init_probe, wavelength, distance, dx)
 
     # Apply Gaussian Low Pass Filter to both real and imaginary parts
-    if lpf_sigma > 0:
-        filtered_real = gaussian_filter(jnp.real(init_probe), sigma=lpf_sigma)
-        filtered_imag = gaussian_filter(jnp.imag(init_probe), sigma=lpf_sigma)
-        output = filtered_real + 1j * filtered_imag
-    else:
-        output = init_probe
+    filtered_real = gaussian_filter(jnp.real(init_probe), sigma=lpf_sigma)
+    filtered_imag = gaussian_filter(jnp.imag(init_probe), sigma=lpf_sigma)
+    output = filtered_real + 1j * filtered_imag
 
     return output.astype(jnp.complex64)
 
@@ -518,3 +515,60 @@ def phase_norm(img, ref_img, cstr=None):
     output = cmplx_scaler * img_rgn
 
     return output.astype(jnp.complex64)
+
+
+def tukey_window(length, alpha=0.5):
+    """
+    Generate a Tukey window of a given length and shape parameter.
+
+    Args:
+        length (int): Length of the window.
+        alpha (float): Shape parameter of the Tukey window. Default is 0.5.
+
+    Returns:
+        jax.numpy.ndarray: The Tukey window.
+    """
+    t = jnp.linspace(0, 1, length)
+    w = jnp.ones_like(t)
+
+    # Calculate the number of points to taper
+    n_taper = int(jnp.floor(alpha * (length - 1) / 2))
+
+    # Apply the tapering to both ends of the window
+    taper = 0.5 * (1 + jnp.cos(jnp.pi * (-1 + 2 * t / alpha)))
+    w = jnp.where((t >= 0) & (t < alpha / 2), taper, w)
+    w = jnp.where((t >= 1 - alpha / 2) & (t <= 1), taper[::-1], w)
+
+    return w
+
+
+def gen_tukey_2D_window(init_win, shape_param=0.5):
+    """Generate a 2D Tukey window.
+
+    Args:
+        init_win (jax.numpy.ndarray): Initialized output window.
+        shape_param (float, optional): Shape parameter. Default is 0.5.
+
+    Returns:
+        jax.numpy.ndarray: 2D Tukey window with a maximum value of 1.
+    """
+    # Initialization
+    output = jnp.zeros_like(init_win)
+    win_width = jnp.amin(jnp.array(init_win.shape))
+    x_coords = jnp.linspace(-win_width / 2, win_width / 2, win_width)
+    y_coords = jnp.linspace(-win_width / 2, win_width / 2, win_width)
+
+    # Generate 1D Tukey window
+    tukey_1d_win = tukey_window(win_width, shape_param)
+    tukey_1d_win_half = tukey_1d_win[len(tukey_1d_win) // 2 - 1:]
+
+    # Generate 2D Tukey window from 1D Tukey window
+    dist_matrix = jnp.sqrt(jnp.square(x_coords[:, jnp.newaxis]) + jnp.square(y_coords))
+    mask = dist_matrix <= win_width / 2
+    dist_flat = jnp.ravel(dist_matrix)
+    mask_flat = jnp.ravel(mask)
+    tukey_interp = jnp.interp(dist_flat, jnp.arange(len(tukey_1d_win_half)), tukey_1d_win_half)
+    output_flat = jnp.where(mask_flat, tukey_interp, output.ravel())
+    output = jnp.reshape(output_flat, output.shape)
+
+    return output
