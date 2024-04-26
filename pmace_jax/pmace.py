@@ -214,11 +214,227 @@ def pixel_weighted_avg_op(patches, modes, patch_crds, image_sz, probe_exp=1.5, m
     return output_img, output_patch
 
 
+def update_dict(input_dictionary, key, value):
+    """Update the dictionary with a new key-value pair.
+
+    Args:
+        input_dictionary (dict): The dictionary to be updated.
+        key: The key to be added or updated in the dictionary.
+        value: The value associated with the key.
+
+    Returns:
+        dict: The updated dictionary.
+    """
+    input_dictionary[key] = value
+
+    return input_dictionary
+
+
+def add_probe_mode(modes, patches, y_meas, probe_dict, energy_ratio=0.05,
+                   fres_prop=False, dx=None, wavelength=None, propagation_distance=None):
+    """Add a new probe mode to the existing list of probe modes and update the probe dictionary.
+
+    Args:
+        modes (jax.numpy.ndarray): Array of existing probe modes.
+        patches (jax.numpy.ndarray): The estimates of projected patches.
+        y_meas (jax.numpy.ndarray): The intensity measurement.
+        probe_dict (dict): Dictionary containing probe modes.
+        energy_ratio (float, optional): Ratio of energy in the new probe mode compared to the existing ones. Default is 0.05.
+        fres_prop (bool, optional): Flag for performing Fresnel propagation. Default is False.
+        dx (float, optional): Sampling interval at source plane.
+        wavelength (float, optional): Wavelength of the imaging radiation.
+        propagation_distance (float, optional): Propagation distance.
+
+    Returns:
+        jax.numpy.ndarray: Updated array of probe modes with the newly added probe mode.
+        dict: Updated dictionary of probe modes with the newly added probe mode.
+    """
+    # Calculate the sum of estimated intensities
+    vectorized_squared_abs = vmap(squared_abs_ft, in_axes=(None, 0), out_axes=0)
+    sum_abs_squared =  jnp.sum(vectorized_squared_abs(patches, modes), axis=0)
+
+    # Calculate the square root of the total energy
+    # sqrt_total_energy = jnp.sqrt(jnp.sum(jnp.linalg.norm(mode) ** 2 for mode in modes))
+    total_energy = 0
+    for mode in modes:
+        total_energy = total_energy + jnp.linalg.norm(mode)
+    sqrt_total_energy = jnp.sqrt(total_energy)
+
+    # Calculate the residual intensity value and apply clip-to-zero strategy
+    res_meas = jnp.sqrt(jnp.maximum(y_meas ** 2 - sum_abs_squared, 0))
+
+    # Calculate the new probe mode
+    tmp_probe_arr = jnp.divide(compute_ift(res_meas), patches)
+    tmp_probe_mode = jnp.average(tmp_probe_arr, axis=0)
+
+    # Apply Fresnel propagation if requested
+    if fres_prop:
+        k0 = 2 * jnp.pi / wavelength
+        Nx, Ny = y_meas.shape[-2], y_meas.shape[-1]
+        # if dx is None:
+        #     dx = jnp.sqrt(2 * jnp.pi * propagation_distance / (k0 * Nx))
+        new_probe_mode = fresnel_propagation(tmp_probe_mode, wavelength, propagation_distance, dx)
+        new_probe_arr = [new_probe_mode] * len(y_meas)
+    else:
+        new_probe_mode = tmp_probe_mode
+        new_probe_arr = tmp_probe_arr
+
+    # Update probe_dict and probe_modes
+    probe_dict = update_dict(probe_dict, len(modes), jnp.array(new_probe_arr))
+    modes = jnp.concatenate((modes, jnp.expand_dims(new_probe_mode, axis=0)), axis=0)
+
+    # Balance the energy distribution among probe modes
+    for mode_idx, cur_mode in enumerate(modes):
+        cur_probe_arr = jnp.array(probe_dict[mode_idx])
+        # probe_modes.at[mode_idx].set(jnp.average(new_probe_arr, axis=0))
+        modes.at[mode_idx].set(cur_mode / jnp.sqrt(1 + energy_ratio))
+        # modes[mode_idx] = cur_mode / jnp.sqrt(1 + energy_ratio)
+        probe_dict[mode_idx] = cur_probe_arr / jnp.sqrt(1 + energy_ratio)
+
+    return modes, probe_dict
+
+
+@jit
+def orthogonalize_images(cmplx_imgs):
+    """Orthogonalize complex-valued images using Singular Value Decomposition (SVD).
+
+    Args:
+        cmplx_imgs (list of jax.numpy.ndarrays): List of input complex-valued images.
+
+    Returns:
+        list of jax.numpy.ndarrays: List of orthogonalized complex-valued images.
+    """
+    # Initialize an empty list
+    orthogonalized_imgs = []
+
+    # Stack the flattened images into a matrix
+    stacked_imgs = jnp.stack(cmplx_imgs, axis=-1)
+
+    # Reshape the stacked matrix to have each image as a column
+    reshaped_imgs = jnp.reshape(stacked_imgs, (-1, len(cmplx_imgs)))
+
+    # Perform SVD
+    U, s, Vh = jnp.linalg.svd(reshaped_imgs, full_matrices=False)
+
+    # Reconstruct the orthogonalized images using singular vectors
+    recon_imgs = jnp.dot(U, jnp.diag(s))
+
+    # Reshape orthogonalized images to their original shapes
+    for i in range(len(cmplx_imgs)):
+        ortho_img = jnp.reshape(recon_imgs[:, i], cmplx_imgs[i].shape)
+        orthogonalized_imgs.append(ortho_img)
+
+    return orthogonalized_imgs
+
+
+def find_center_offset(cmplx_img):
+    """Find the offset between the center of the input complex image and the true center of the image.
+
+    Args:
+        cmplx_img (jax.numpy.ndarray): Complex-valued input image.
+
+    Returns:
+        list: A list containing the offset in the x and y directions, respectively.
+    """
+    # Find the center of the given image
+    c_0, c_1 = (jnp.shape(cmplx_img)[0] - 1)/ 2.0, (jnp.shape(cmplx_img)[1] - 1) / 2.0
+
+    # Calculate peak and mean value of the magnitude image
+    mag_img = jnp.abs(cmplx_img)
+    peak_mag, mean_mag = jnp.amax(mag_img), jnp.mean(mag_img)
+
+    # Find a group of points above the mean value
+    pts = jnp.argwhere(jnp.logical_and(mag_img >= mean_mag, mag_img <= peak_mag))
+
+    # Find the unknown shifted center by averaging the group of points
+    curr_center = jnp.mean(pts, axis=0)
+
+    # Compute the offset between the unknown shifted center and the true center of the image
+    offset = [c_0 - curr_center[0], c_1 - curr_center[1]]
+
+
+    return offset
+
+
+def shift_complex_array(arr, delta_y, delta_x) :
+    """Shift a 2D complex array by non-integer displacement amounts using the Fourier shift theorem.
+
+    Args:
+        arr (jax.numpy.ndarray): The image to be aligned/corrected.
+        delta_y (jax.numpy.ndarray): The displacement amount in the y-direction.
+        delta_x (jax.numpy.ndarray): The displacement amount in the x-direction.
+
+    Returns:
+        jax.numpy.ndarray: The shifted 2D complex array.
+    """
+    # Determine the dimensions of the input array
+    ny, nx = arr.shape
+    
+    # Determine the padding width based on the maximum displacement and add a safety margin
+    pad_width = max(int(1.5 * abs(delta_x)), int(1.5 * abs(delta_y)), 20)
+    
+    # Pad the input array with zeros
+    padded_arr = np.pad(arr, pad_width, mode='constant', constant_values=0)
+    
+    # Compute the 2D Fourier transform of the padded array
+    arr_fft = np.fft.fft2(padded_arr)
+    
+    # Determine the dimensions of the padded array
+    ly, lx = padded_arr.shape
+    
+    # Compute the frequency grid for the Fourier transform
+    x = np.fft.fftfreq(lx)
+    y = np.fft.fftfreq(ly)
+    xv, yv = np.meshgrid(x, y)
+    
+    # Compute the phase shift kernel based on the desired displacement
+    shift_kernel = np.exp(-2j * np.pi * (xv * delta_x + yv * delta_y))
+    
+    # Apply the phase shift to the Fourier transformed array
+    arr_fft_shifted = arr_fft * shift_kernel
+    
+    # Compute the inverse Fourier transform to obtain the shifted array in the spatial domain
+    arr_shifted_padded = np.fft.ifft2(arr_fft_shifted)
+    
+    # Determine the starting indices for the region of interest in the padded array
+    startx = pad_width
+    starty = pad_width
+    
+    # Extract the region of interest from the padded array to obtain the final shifted array
+    arr_shifted = arr_shifted_padded[starty :starty + ny, startx :startx + nx]
+    
+    return arr_shifted
+
+
+def correct_img_center(input_img, ref_img=None):
+    """
+    Correct the center of an image by aligning it with a reference image.
+
+    Args:
+        input_img (jnp.ndarray): The image to be aligned/corrected.
+        ref_img (jnp.ndarray): The reference image. If not provided, the input image is used as the reference.
+
+    Returns:
+        jnp.ndarray: The corrected image with the center aligned to the reference.
+    """
+    # Check the reference image
+    if ref_img is None:
+        ref_img = jnp.copy(input_img)
+
+    # Compute center offset using the reference image
+    offset = find_center_offset(ref_img)
+
+    # Shift the image back to the correct location
+    output = shift_complex_array(input_img, offset[0], offset[1])
+
+    return output
+
+
 def pmace_recon(y_meas, patch_crds, init_object,
                 init_probe=None, ref_object=None, ref_probe=None,
                 num_iter=100, joint_recon=False, recon_win=None, save_dir=None,
                 object_data_fit_param=0.5, probe_data_fit_param=0.5, rho=0.5, probe_exp=1.5,
-                regularization=False, reg_param=0.1,
+                regularization=False, reg_param=0.1, probe_center_correction=False,
                 iter_add_mode=[], energy_ratio=0.05, iter_orthogonalize_modes=[],
                 fresnel_propagation=False, dx=None, wavelength=None, propagation_dist=None):
     """Projected Multi-Agent Consensus Equilibrium (PMACE).
@@ -280,7 +496,7 @@ def pmace_recon(y_meas, patch_crds, init_object,
 
     # Initialize error metrics
     nrmse_object = []
-    nrmse_probe = []
+    nrmse_probe = [ [] for _ in range(max(2, 1 + len(set(iter_add_mode)))) ]
     nrmse_meas = []
 
     # Initialize estimates with specific data type and creat current patches
@@ -297,21 +513,19 @@ def pmace_recon(y_meas, patch_crds, init_object,
     else:
         ref_probe_modes = None
 
-    # # Initialize probe
-    # if joint_recon:
-    #     if jnp.ndim(jnp.array(init_probe)) == 2:
-    #         probe_modes = jnp.expand_dims(init_probe, axis=0)
-    #     elif jnp.ndim(jnp.array(init_probe)) == 3:
-    #         probe_modes = jnp.array(init_probe, dtype=cdtype)
-    #     probe_dict = {}
-    #     for mode_idx, cur_mode in enumerate(probe_modes):
-    #         new_probe_arr = jnp.array([cur_mode] * len(y_meas))
-    #         probe_dict = jax.ops.index_update(probe_dict, jax.ops.index[mode_idx], new_probe_arr)  # {mode_idx: mode_array}
-    # else:
-    #     probe_modes = ref_probe_modes
-    # TODO: Initialize probe modes
-    revy_probe = ref_probe_modes
-    probe_modes = ref_probe_modes
+    # Initialize probe
+    if joint_recon:
+        if jnp.ndim(jnp.array(init_probe)) == 2:
+            probe_modes = jnp.expand_dims(init_probe, axis=0)
+        elif jnp.ndim(jnp.array(init_probe)) == 3:
+            probe_modes = jnp.array(init_probe, dtype=cdtype)
+        # Initialize probe dictionary
+        probe_dict = {}
+        for mode_idx, cur_mode in enumerate(probe_modes):
+            new_probe_arr = jnp.array([cur_mode] * len(y_meas))
+            probe_dict[mode_idx] = new_probe_arr
+    else:
+        probe_modes = ref_probe_modes
 
     # Iterate over the number of iterations
     print('{} recon starts ...'.format(approach))
@@ -323,15 +537,69 @@ def pmace_recon(y_meas, patch_crds, init_object,
         cur_patch = object_data_fit_op(new_patch, probe_modes, y_meas,
                                        object_data_fit_param, mode_weights)
 
-        est_obj, consens_patch = pixel_weighted_avg_op(2 * cur_patch - new_patch, probe_modes,
-                                                       patch_crds, image_sz, probe_exp=probe_exp, mode_weights=mode_weights,
+        est_obj, consens_patch = pixel_weighted_avg_op(2 * cur_patch - new_patch, probe_modes, patch_crds, image_sz, 
+                                                       probe_exp=probe_exp, mode_weights=mode_weights,
                                                        regularization=regularization, bm3d_psd=reg_param, blk_idx=denoising_blk_idx)
 
         new_patch = new_patch + 2 * rho * (consens_patch - cur_patch)
 
         if not regularization:
-            est_obj, consens_patch = pixel_weighted_avg_op(new_patch, probe_modes, patch_crds, image_sz, probe_exp=probe_exp, mode_weights=mode_weights)
+            est_obj, consens_patch = pixel_weighted_avg_op(new_patch, probe_modes, patch_crds, image_sz, 
+                                                           probe_exp=probe_exp, mode_weights=mode_weights)
 
+        if joint_recon:
+            # Add new probe mode
+            if i + 1 in iter_add_mode:
+                probe_modes, probe_dict = add_probe_mode(probe_modes, consens_patch, y_meas, probe_dict, 
+                                                         energy_ratio=energy_ratio, fres_prop=fres_prop, 
+                                                         dx=dx, wavelength=wavelength, propagation_distance=propagation_dist)
+                save_tiff(probe_modes[-1], save_dir + 'added_mode_iter_{}.tiff'.format(i+1))
+
+            # Orthogonalize probe modes
+            if i + 1 in iter_orthogonalize_modes:
+                probe_modes = jnp.array(orthogonalize_images(probe_modes))
+                # Update probe array
+                for mode_idx, cur_mode in enumerate(probe_modes):
+                    probe_dict[mode_idx] = jnp.array([cur_mode] * len(y_meas))
+
+            # Automatically vectorize squared_abs_ft over modes
+            vectorized_squared_abs = vmap(squared_abs_ft, in_axes=(None, 0), out_axes=0)
+
+            # Compute squared absolute values for all modes and sum them
+            sum_abs_squared =  jnp.sum(vectorized_squared_abs(consens_patch, probe_modes), axis=0)
+
+            # Normalize measurements based on sum of squared absolute values
+            normalized_y_meas = y_meas / (jnp.sqrt(sum_abs_squared) + 1e-12)
+
+            # Compute data fitting points for each mode and patch, this returns (num_patches, num_nodes, probe.shape[0], probe.shape[1])
+            data_fitting_modes = vmap(get_data_fit_pt, in_axes=(None, 0, 0), out_axes=0)(probe_modes, consens_patch, normalized_y_meas)
+
+            # Transpose mode_contributions to get shape (num_nodes, num_patches, probe.shape[0], probe.shape[1])
+            data_fitting_modes = jnp.transpose(data_fitting_modes, (1, 0, 2, 3))
+
+            # Loop through probe_modes to update each mode
+            for mode_idx, cur_mode in enumerate(probe_modes):
+                # Get the current probe data
+                # new_probe_arr = probe_dict[mode_idx]
+                new_probe_arr = jnp.array([cur_mode] * len(y_meas))
+
+                # Apply the probe data fitting operation: w <- F(v; w)
+                cur_probe_arr = (1 - probe_data_fit_param) * new_probe_arr + probe_data_fit_param * data_fitting_modes[mode_idx]
+
+                # Calculate the consensus probe: z <- G(2w - v)
+                consens_probe = np.average((2 * cur_probe_arr - new_probe_arr), axis=0)
+                # Probe center correction
+                # TODO: Subpixel shift after integer shift
+                if probe_center_correction:
+                    consens_probe = correct_img_center(consens_probe)
+
+                # Update the probe data: v <- v + 2 * rho * (z - w)
+                new_probe_arr = new_probe_arr + 2 * rho * (consens_probe - cur_probe_arr)
+
+                # Update probe modes
+                probe_modes = probe_modes.at[mode_idx].set(jnp.average(new_probe_arr, axis=0))
+                probe_dict[mode_idx] = new_probe_arr
+                
         # Phase normalization and scale image to minimize the intensity difference
         if ref_object is not None:
             revy_obj = phase_norm(est_obj * recon_win, ref_object * recon_win, cstr=recon_win)
@@ -340,6 +608,19 @@ def pmace_recon(y_meas, patch_crds, init_object,
         else:
             revy_obj = est_obj
 
+        # Phase normalization and scale probe to minimize the intensity difference
+        if joint_recon and (ref_probe_modes is not None):
+            revy_probe = []
+            for mode_idx in range(min(len(probe_modes), len(ref_probe_modes))):
+                tmp_probe_mode = phase_norm(jnp.copy(probe_modes[mode_idx]), ref_probe_modes[mode_idx])
+                tmp_probe_err = compute_nrmse(tmp_probe_mode, ref_probe_modes[mode_idx])
+                nrmse_probe[mode_idx].append(tmp_probe_err)
+                # revy_probe.append(tmp_probe_mode)
+                # revy_probe = jnp.array(revy_probe)
+        # else:
+        #     revy_probe = probe_modes
+        revy_probe = probe_modes
+        
         # Calculate error in measurement domain
         vectorized_squared_abs = vmap(squared_abs_ft, in_axes=(None, 0), out_axes=0)
         sum_abs_squared = jnp.sum(vectorized_squared_abs(consens_patch, probe_modes), axis=0)
@@ -363,18 +644,19 @@ def pmace_recon(y_meas, patch_crds, init_object,
             save_array(nrmse_meas, f'{save_dir}nrmse_meas_{nrmse_meas[-1]}')
 
     # Save joint reconstruction results if applicable
-    if joint_recon and probe_modes is not None and save_dir is not None:
+    if joint_recon and probe_modes is not None:
         for mode_idx, cur_mode in enumerate(probe_modes):
             save_tiff(cur_mode, f'{save_dir}probe_est_mode_{mode_idx}_iter_{i + 1}.tiff')
-       # Save NRMSE for probe if provided
+        # Save NRMSE for probe if provided
+        # print(nrmse_probe)
         if nrmse_probe is not None:
             if len(nrmse_probe) == len(probe_modes):
-                save_array(nrmse_probe, f'{save_dir}nrmse_probe{nrmse_probe[-1]}')
-            else:
                 for mode_idx, nrmse_mode in enumerate(nrmse_probe):
                     if nrmse_mode:
                         save_array(nrmse_mode, f'{save_dir}probe_mode_{mode_idx}_nrmse_{nrmse_mode[-1]}')
-
+            else:
+                save_array(nrmse_probe, f'{save_dir}nrmse_probe_{nrmse_probe[-1]}')
+            
     # Return recon results
     print('{} recon completed.'.format(approach))
     keys = ['object', 'probe', 'err_obj', 'err_probe', 'err_meas']
