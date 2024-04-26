@@ -30,7 +30,7 @@ Installing
         .. code-block::
 
             cd dev_scripts
-            source clean_install_all.sh
+            yes | source clean_install_all.sh
 
     b. Option 2: Manual install
 
@@ -73,5 +73,4 @@ Run any of the available demo scripts with something like the following:
 
     .. code-block::
 
-        python demo/<demo_file>.py
-
+        python demo/demo_pmace.py
