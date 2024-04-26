@@ -1,0 +1,14 @@
+data:
+  gt_object_dir: /depot/bouman/users/qzhai/ptycho_pmace/data/synthetic_data/ref_object_seed_6_thickness_1e-6.tiff
+  gt_probe_dir: /depot/bouman/users/qzhai/ptycho_pmace/data/PMACE_demo_data/synthetic_data/SyntheticImg_data/ground_truth_img/SIM-generating_probe.tiff
+simulation:
+  crop_image: False
+  image_size: [660, 660]
+  num_meas: 400
+  probe_spacing: 36     # [20, 900]    [36, 121]    [28, 196]
+  max_scan_loc_offset: 5
+  add_noise: True
+  peak_photon_rate: 1e4
+  shot_noise_rate: 0.5
+output:
+  out_dir: /depot/bouman/users/qzhai/ptycho_pmace/data/synthetic_data/noisy_synthetic_single_mode/object_seed_6_thickness_1e-6_mode/peak_photon_rate_1e4_probe_spacing_36/

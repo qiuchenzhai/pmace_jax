@@ -1,0 +1,21 @@
+data:
+  data_dir: /depot/bouman/users/qzhai/ptycho_pmace/data/synthetic_data/noisy_synthetic_single_mode/object_seed_6_thickness_1e-6_mode/peak_photon_rate_1e5_probe_spacing_20/
+  meas_dir: frame_data/
+  ref_object_dir: ref_object.tiff
+  ref_probe_dir: ref_probe.tiff
+  sample_pos_dir: Translations.tsv.txt
+  window_coords: [240, 840, 240, 840]
+initialization:
+  fresnel_propagation: True
+  sampling_interval: 1.28e-08
+  source_wavelength: 1.4e-9
+  propagation_distance: 1e-4
+recon:
+  num_iter: 100
+  joint_recon: True
+PMACE:
+  object_data_fitting_param: 0.5
+  probe_data_fitting_param: 0.6
+  probe_exp: 1
+output:
+  out_dir: /depot/bouman/users/qzhai/ptycho_pmace/output/experiment/synthetic_case/noisy_synthetic_single_mode/object_seed_6_thickness_1e-6_mode/peak_photon_rate_1e5_probe_spacing_20/
