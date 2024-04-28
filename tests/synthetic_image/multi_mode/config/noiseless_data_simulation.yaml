@@ -1,0 +1,18 @@
+data:
+  gt_object_dir: /depot/bouman/users/qzhai/ptycho_data/FakeIC/SIM-generating_object.tiff
+  gt_probe_0_dir: /depot/bouman/users/qzhai/ptycho_data/incoherent_probe_modes/APSProbeSymmetric256.tif
+  gt_probe_1_dir: /depot/bouman/users/qzhai/ptycho_data/incoherent_probe_modes/zone_plate_probe_gaussian_blur_2.tiff
+simulation:
+  crop_image: False
+  image_size: [660, 660]
+  num_meas: 400
+  probe_spacing: 20
+  max_scan_loc_offset: 5
+  add_noise: False
+  peak_photon_rate: 1e4
+  shot_noise_rate: 0.5
+  distribute_energy: True
+  energy_ratio: 0.1
+  mode_orthogonalization: False
+output:
+  out_dir: /depot/bouman/users/qzhai/ptycho_pmace/data/synthetic_data/noiseless_two_mode_data/probe_spacing_20/

@@ -1,0 +1,26 @@
+data:
+  data_dir: /depot/bouman/users/qzhai/ptycho_pmace/data/synthetic_data/noiseless_two_mode_data/probe_spacing_20/
+  meas_dir: frame_data/
+  ref_object_dir: ref_object.tiff
+  ref_mode_0_dir: ref_probe_0.tiff
+  ref_mode_1_dir: ref_probe_1.tiff
+  sample_pos_dir: Translations.tsv.txt
+  window_coords: [100, 560, 100, 560]
+initialization:
+  fresnel_propagation: True
+  sampling_interval: 1.2e-09
+  source_wavelength: 1.4e-10
+  propagation_distance: 6e-6
+recon:
+  num_iter: 100
+  joint_recon: True
+PMACE:
+  object_data_fitting_param: 0.5
+  probe_data_fitting_param: 0.6
+  probe_exp: 1
+  iter_add_mode: [20]
+  energy_ratio: 0.1
+  propagation_distance: 4e-6
+  iter_orthogonalize_modes: []
+output:
+  out_dir: /depot/bouman/users/qzhai/ptycho_pmace/output/experiment/synthetic_case/noiseless_two_mode_data/probe_spacing_20/
