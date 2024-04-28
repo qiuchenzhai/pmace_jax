@@ -284,7 +284,7 @@ def get_proj_coords_from_data(scan_loc, y_meas):
         jax.numpy.ndarray: Scan coordinates.
     """
     num_pts, m, n = y_meas.shape
-    rounded_scan_loc = jnp.round(scan_loc)
+    rounded_scan_loc = jnp.round(scan_loc).astype(jnp.int32)
 
     projection_coords = jnp.zeros((num_pts, 4), dtype=int)
     projection_coords = projection_coords.at[:, 0].set(rounded_scan_loc[:, 1] - m // 2)
