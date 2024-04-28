@@ -436,7 +436,7 @@ def pmace_recon(y_meas, patch_crds, init_object,
                 object_data_fit_param=0.5, probe_data_fit_param=0.5, rho=0.5, probe_exp=1.5,
                 regularization=False, reg_param=0.1, probe_center_correction=False,
                 iter_add_mode=[], energy_ratio=0.05, iter_orthogonalize_modes=[],
-                fresnel_propagation=False, dx=None, wavelength=None, propagation_dist=None):
+                fres_prop=False, dx=None, wavelength=None, propagation_dist=None):
     """Projected Multi-Agent Consensus Equilibrium (PMACE).
     
     Args:
@@ -459,7 +459,7 @@ def pmace_recon(y_meas, patch_crds, init_object,
         iter_add_mode (list, optional): Iterations at which new modes are added for probe reconstruction.
         energy_ratio (float, optional): Energy ratio for adding new probe modes. Defaults to 0.05.
         iter_orthogonalize_modes (list, optional): Iterations at which probe modes are orthogonalized.
-        fresnel_propagation (bool, optional): Flag to enable Fresnel propagation in the reconstruction. Defaults to False.
+        fres_prop (bool, optional): Flag to enable Fresnel propagation in the reconstruction. Defaults to False.
         dx (float, optional): Sampling interval in the object plane, required if Fresnel propagation is enabled.
         wavelength (float, optional): Illumination wavelength, required if Fresnel propagation is enabled.
         propagation_dist (float, optional): Fresnel propagation distance from the object to the detector plane.
